@@ -1,0 +1,92 @@
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include "DHT.h"
+
+#define DHTPIN     15
+#define DHTTYPE    DHT22
+DHT dht(DHTPIN, DHTTYPE);
+
+// WiFi credentials
+const char* ssid     = "Wokwi-GUEST";
+const char* password = "";
+
+// MQTT broker
+const char* mqtt_server = "mqtt.eclipseprojects.io";
+
+// Simulasi pin ADC
+const int pinPH       = 34;  // Potensiometer pH
+const int pinDO       = 35;  // Potensiometer DO
+const int pinTinggi   = 32;  // Potensiometer tinggi air
+const int pinBerat    = 33;  // Potensiometer berat pakan
+
+// Nomor kolam (boleh ubah sesuai kolam yang disimulasikan)
+const int kolamId = 1;
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+void setup() {
+  Serial.begin(115200);
+  dht.begin();
+
+  // Connect WiFi
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected");
+
+  // Setup MQTT
+  client.setServer(mqtt_server, 1883);
+}
+
+void loop() {
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop();
+
+  // 1. Baca sensor DHT22
+  float suhu    = dht.readTemperature();  // suhu dalam °C
+
+  // 2. Baca potensiometer dan map ke rentang
+  int   rawPh     = analogRead(pinPH);
+  float ph        = map(rawPh,   0, 4095, 0, 14);   // pH 0–14
+
+  int   rawDo     = analogRead(pinDO);
+  float doLevel   = map(rawDo,  0, 4095, 0, 10);    // DO 0–10 mg/L
+
+  int   rawTinggi = analogRead(pinTinggi);
+  int   tinggi    = map(rawTinggi, 0, 4095,  50, 200); // tinggi air 50–200 cm
+
+  int   rawBerat  = analogRead(pinBerat);
+  int   berat     = map(rawBerat,  0, 4095, 100, 500); // berat pakan 100–500 g
+
+  // 3. Buat payload JSON
+  String payload = "{";
+  payload += "\"kolam\":"      + String(kolamId) + ",";
+  payload += "\"suhuAir\":"    + String(suhu,     1) + ",";
+  payload += "\"phAir\":"      + String(ph,       2) + ",";
+  payload += "\"do\":"         + String(doLevel,  2) + ",";
+  payload += "\"tinggiAir\":"  + String(tinggi)         + ",";
+  payload += "\"beratPakan\":" + String(berat);
+  payload += "}";
+
+  // 4. Publish ke MQTT
+  client.publish("K6/kolam/sensor/status", payload.c_str());
+  Serial.println("Data published: " + payload);
+
+  delay(5000); // tunggu 5 detik sebelum membaca lagi
+}
+
+void reconnect() {
+  while (!client.connected()) {
+    if (client.connect("ESP32Client")) {
+      Serial.println("Connected to MQTT");
+    } else {
+      Serial.print(".");
+      delay(1000);
+    }
+  }
+}
